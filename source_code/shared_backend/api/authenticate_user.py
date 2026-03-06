@@ -1,17 +1,14 @@
 import logging
 import os
-import traceback
 from collections.abc import Awaitable, Callable
-from datetime import datetime
-from typing import ClassVar, Optional
+from typing import ClassVar
 
 import jwt
+from fast_server import APIOperation
 from fastapi import Body, HTTPException
 from jwt import PyJWKClient
 
-from fast_server import APIOperation
-
-from shared_backend.data.user_related.user.user import User, UserAccount, UserIdentity, UserPreferences
+from shared_backend.data.user_related.user.user import User
 
 logger = logging.getLogger(__name__)
 
@@ -30,8 +27,12 @@ class AuthenticateUser(APIOperation):
     def register_post_signup_hook(cls, hook: Callable[[str], Awaitable]):
         cls._post_signup_hooks.append(hook)
 
+    WEBSITE_AUDIENCE = os.environ.get("APPLE_WEB_SERVICES_ID", "com.sprout.website")
+
     @classmethod
-    async def _verify_apple_token(cls, identity_token: str) -> tuple[str, str | None]:
+    async def _verify_apple_token(
+        cls, identity_token: str
+    ) -> tuple[str, str | None, str | list[str]]:
         jwks_client = PyJWKClient(cls.APPLE_PUBLIC_KEYS_URL)
         signing_key = jwks_client.get_signing_key_from_jwt(identity_token)
         decoded = jwt.decode(
@@ -41,62 +42,58 @@ class AuthenticateUser(APIOperation):
             audience=cls.VALID_AUDIENCES,
             issuer="https://appleid.apple.com",
         )
-        return decoded["sub"], decoded.get("email")
+        return decoded["sub"], decoded.get("email"), decoded.get("aud")
 
     async def execute(
         self,
         identity_token: str = Body(),
-        name: Optional[str] = Body(None),
-        birthday: Optional[datetime] = Body(None),
-        top_goals: list[str] = Body([]),
+        name: str | None = Body(None),
+        goals: list[str] = Body([]),
     ) -> dict:
         try:
-            return await self._authenticate(identity_token, name, birthday, top_goals)
-        except HTTPException:
-            raise
+            user_id, email, aud = await self._verify_apple_token(identity_token)
         except Exception:
-            traceback.print_exc()
-            raise HTTPException(status_code=500, detail="Internal server error during authentication.")
-
-    async def _authenticate(self, identity_token: str, name, birthday, top_goals) -> dict:
-        try:
-            user_id, email = await self._verify_apple_token(identity_token)
-        except Exception:
-            raise HTTPException(status_code=401, detail="Invalid or expired Apple identity token.")
+            raise HTTPException(
+                status_code=401, detail="Invalid or expired Apple identity token."
+            )
 
         existing_user = await User.find_one({"account.user_id": user_id})
+
+        if not existing_user:
+            aud_list = [aud] if isinstance(aud, str) else (aud or [])
+            if self.WEBSITE_AUDIENCE in aud_list:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Please sign up through the Sprout app first.",
+                )
+            if not email or not name:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Email and name are required to create a new user.",
+                )
 
         if existing_user:
             updates = {}
             if email and not existing_user.account.email:
                 updates["account.email"] = email
-            if name:
-                if not existing_user.identity:
-                    updates["identity"] = {"name": name}
-                elif existing_user.identity.name != name:
-                    updates["identity.name"] = name
-            if birthday:
-                if existing_user.identity and existing_user.identity.birthday != birthday:
-                    updates["identity.birthday"] = birthday
-                elif not existing_user.identity and name:
-                    updates.setdefault("identity", {})["birthday"] = birthday
+            if name and existing_user.profile.name != name:
+                updates["profile.name"] = name
             if updates:
                 await User.update_one({"account.user_id": user_id}, {"$set": updates})
 
-            resolved_name = name or (existing_user.identity.name if existing_user.identity else None)
-            resolved_email = email or (existing_user.account.email if existing_user.account else None)
             return {
                 "user_id": user_id,
                 "is_new_user": False,
-                "name": resolved_name,
-                "email": resolved_email,
+                "name": name or existing_user.profile.name,
+                "email": email or existing_user.account.email,
             }
 
         new_user = User(
             id=user_id,
-            account=UserAccount(user_id=user_id, email=email),
-            identity=UserIdentity(name=name, birthday=birthday) if name and birthday else None,
-            preferences=UserPreferences(top_goals=top_goals),
+            account=User.Account(user_id=user_id, email=email),
+            profile=User.Profile(name=name, goals=goals),
+            settings=User.Settings(),
+            interactions=User.Interactions(),
         )
         await new_user.save()
 
