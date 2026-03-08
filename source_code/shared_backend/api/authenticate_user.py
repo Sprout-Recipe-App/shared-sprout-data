@@ -18,6 +18,7 @@ class AuthenticateUser(APIOperation):
     APPLE_PUBLIC_KEYS_URL = "https://appleid.apple.com/auth/keys"
     VALID_AUDIENCES = [
         "com.ecstasy.sprout",
+        "com.sproutjoy.sprout.beta",
         os.environ.get("APPLE_WEB_SERVICES_ID", "com.sprout.website"),
     ]
 
