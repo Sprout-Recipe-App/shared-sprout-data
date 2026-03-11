@@ -93,7 +93,6 @@ class AuthenticateUser(APIOperation):
             id=user_id,
             account=User.Account(user_id=user_id, email=email),
             profile=User.Profile(name=name, goals=goals),
-            settings=User.Settings(),
             interactions=User.Interactions(),
         )
         await new_user.save()
