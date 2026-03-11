@@ -27,7 +27,6 @@ class UserDataModelHandler:
         return User(
             account=User.Account(user_id=user_id, email=email),
             profile=User.Profile(name=name, goals=[priority]),
-            settings=User.Settings(),
             interactions=User.Interactions(),
         )
 

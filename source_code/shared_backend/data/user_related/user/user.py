@@ -11,9 +11,6 @@ class User(MongoDBBaseModel, database="sprout_data", collection="users"):
         name: str
         goals: list[str]
 
-    class Settings(BaseModel):
-        beta_features_enabled: bool = False
-
     class Interactions(BaseModel):
         saved_recipe_ids: list[str] = []
         dismissed_recipe_ids: list[str] = []
@@ -21,5 +18,4 @@ class User(MongoDBBaseModel, database="sprout_data", collection="users"):
 
     account: Account
     profile: Profile
-    settings: Settings
     interactions: Interactions
